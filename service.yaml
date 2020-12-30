@@ -1,0 +1,32 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: enroller
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+        - image: registry.zouzland.com/enroller:0.0.5
+          name: enroller
+          env:
+            - name: model_dir
+              value: /opt/enroller
+      imagePullSecrets:
+        - name: regcred
+---
+#apiVersion: eventing.knative.dev/v1
+#kind: Trigger
+#metadata:
+#  name: enroller
+#spec:
+#  broker: default
+#  filter:
+#    attributes:
+#      source: grpc-backend
+#      type: enroll
+#  subscriber:
+#    ref:
+#      apiVersion: serving.knative.dev/v1
+#      kind: Service
+#      name: enroller
