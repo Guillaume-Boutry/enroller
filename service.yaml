@@ -7,11 +7,13 @@ spec:
   template:
     spec:
       containers:
-        - image: registry.zouzland.com/enroller:0.0.5
+        - image: registry.zouzland.com/enroller:0.0.9
           name: enroller
           env:
             - name: model_dir
               value: /opt/enroller
+            - name: K_SINK
+              value: http://data-controller.default
       imagePullSecrets:
         - name: regcred
 ---

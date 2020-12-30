@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
-	"github.com/Guillaume-Boutry/grpc-backend/pkg/face_authenticator"
 	authenticator "github.com/Guillaume-Boutry/face-authenticator-wrapper"
+	"github.com/Guillaume-Boutry/grpc-backend/pkg/face_authenticator"
 	"github.com/golang/protobuf/proto"
 	"log"
 	"os"
@@ -43,7 +46,7 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	if err := client.StartReceiver(context.Background(),  r.ReceiveAndReply); err != nil {
+	if err := client.StartReceiver(context.Background(), r.ReceiveAndReply); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -52,29 +55,40 @@ type Message struct {
 	Payload []byte `json:"payload"`
 }
 
+type RequestInsert struct {
+	Id         string `json:"id"`
+	Embeddings string `json:"embeddings"`
+}
 
 // ReceiveAndReply is invoked whenever we receive an event.
 func (recv *Receiver) ReceiveAndReply(ctx context.Context, event cloudevents.Event) (*cloudevents.Event, cloudevents.Result) {
 	req := Message{}
 	if err := event.DataAs(&req); err != nil {
+		log.Println(err)
 		return nil, cloudevents.NewHTTPResult(400, "failed to convert data: %s", err)
 	}
 
 	enrollRequest := &face_authenticator.EnrollRequest{}
 
 	if err := proto.Unmarshal(req.Payload, enrollRequest); err != nil {
+		log.Println(err)
 		return nil, cloudevents.NewHTTPResult(500, "failed to deserialize protobuf")
 	}
 
 	responseChannel := make(chan FeatureMatrix)
 	recv.jobChannel <- &work{
-		faceRequest: enrollRequest.FaceRequest,
-		responseChannel:     responseChannel,
+		faceRequest:     enrollRequest.FaceRequest,
+		responseChannel: responseChannel,
 	}
 	embeddings := <-responseChannel
 	var serialized [authenticator.EMBEDDINGS_SIZE]float32
 	ptr := &serialized[0]
 	authenticator.Serialize_embeddings(embeddings, ptr)
+
+	if err := recv.insertEmbeddings(ctx, enrollRequest.FaceRequest.Id, serialized); err != nil {
+		log.Println(err)
+		return nil, cloudevents.NewHTTPResult(500, "error while inserting to bdd")
+	}
 
 	enrollResponse := &face_authenticator.EnrollResponse{
 		Status:  face_authenticator.EnrollStatus_ENROLL_STATUS_OK,
@@ -82,22 +96,56 @@ func (recv *Receiver) ReceiveAndReply(ctx context.Context, event cloudevents.Eve
 	}
 	resp, err := proto.Marshal(enrollResponse)
 	if err != nil {
+		log.Println(err)
 		return nil, cloudevents.NewHTTPResult(500, "failed to serialize response")
 	}
 	r := cloudevents.NewEvent(cloudevents.VersionV1)
 	r.SetType("enroll-response")
 	r.SetSource("enroller")
 	if err := r.SetData("application/json", resp); err != nil {
-		return nil, cloudevents.NewHTTPResult(500, "failed to set response data: %s", err)
+		return nil, cloudevents.NewHTTPResult(500, "failed to set response data")
 	}
 
 	return &r, nil
 }
 
+func floatArrayToBytes(array [authenticator.EMBEDDINGS_SIZE]float32) []byte {
+	var buf bytes.Buffer
+	err := binary.Write(&buf, binary.LittleEndian, array)
+	if err != nil {
+		log.Println("binary.Write failed:", err)
+	}
+	return buf.Bytes()
+}
+
+func (recv *Receiver) insertEmbeddings(ctx context.Context, id string, embeddings [authenticator.EMBEDDINGS_SIZE]float32) error {
+	r := cloudevents.NewEvent(cloudevents.VersionV1)
+	r.SetType("insert")
+	r.SetSource("enroller")
+
+	payload := base64.StdEncoding.EncodeToString(floatArrayToBytes(embeddings))
+
+	req := &RequestInsert{
+		Id:         id,
+		Embeddings: payload,
+	}
+	if err := r.SetData("application/json", req); err != nil {
+		log.Println(err)
+		return err
+	}
+	newCtx := cloudevents.ContextWithTarget(ctx, recv.Target)
+
+	_, err := recv.client.Request(newCtx, r)
+	if cloudevents.IsNACK(err) {
+		log.Println(err)
+		return err
+	}
+	return nil
+}
 
 type work struct {
-	faceRequest *face_authenticator.FaceRequest
-	responseChannel     chan FeatureMatrix
+	faceRequest     *face_authenticator.FaceRequest
+	responseChannel chan FeatureMatrix
 }
 
 func validRectangle(coordinates *face_authenticator.FaceCoordinates) bool {
@@ -135,7 +183,7 @@ func generateEmbeddings(authent *authenticator.Authenticator, work *work, idThre
 		facePosition.SetBottom(coords.BottomRight.Y)
 		facePosition.SetRight(coords.BottomRight.X)
 	}
-	log.Printf("Thread %d: Found face in area top_left(%d, %d), bottom_right(%d, %d)\n", idThread, facePosition.GetTop(), facePosition.GetLeft(), facePosition.GetBottom(), facePosition.GetRight(),)
+	log.Printf("Thread %d: Found face in area top_left(%d, %d), bottom_right(%d, %d)\n", idThread, facePosition.GetTop(), facePosition.GetLeft(), facePosition.GetBottom(), facePosition.GetRight())
 	extractedFace := (*authent).ExtractFace(cImgData, facePosition)
 	defer authenticator.DeleteImage(extractedFace)
 	log.Printf("Thread %d: Generating embeddings\n", idThread)
