@@ -7,7 +7,7 @@ spec:
   template:
     spec:
       containers:
-        - image: registry.zouzland.com/enroller:0.0.9
+        - image: registry.zouzland.com/enroller:0.0.12
           name: enroller
           env:
             - name: model_dir

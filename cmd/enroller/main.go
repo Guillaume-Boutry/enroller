@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	authenticator "github.com/Guillaume-Boutry/face-authenticator-wrapper"
 	"github.com/Guillaume-Boutry/grpc-backend/pkg/face_authenticator"
@@ -12,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/kelseyhightower/envconfig"
@@ -55,9 +57,9 @@ type Message struct {
 	Payload []byte `json:"payload"`
 }
 
-type RequestInsert struct {
+type Request struct {
 	Id         string `json:"id"`
-	Embeddings string `json:"embeddings"`
+	Embeddings string `json:"embeddings,omitempty"`
 }
 
 // ReceiveAndReply is invoked whenever we receive an event.
@@ -125,7 +127,7 @@ func (recv *Receiver) insertEmbeddings(ctx context.Context, id string, embedding
 
 	payload := base64.StdEncoding.EncodeToString(floatArrayToBytes(embeddings))
 
-	req := &RequestInsert{
+	req := &Request{
 		Id:         id,
 		Embeddings: payload,
 	}
@@ -135,10 +137,15 @@ func (recv *Receiver) insertEmbeddings(ctx context.Context, id string, embedding
 	}
 	newCtx := cloudevents.ContextWithTarget(ctx, recv.Target)
 
-	_, err := recv.client.Request(newCtx, r)
-	if cloudevents.IsNACK(err) {
-		log.Println(err)
-		return err
+	response, res := recv.client.Request(newCtx, r)
+	if cloudevents.IsUndelivered(res) {
+		log.Printf("Failed to request: %v", res)
+		return res
+	} else if response != nil {
+		log.Printf("Got Event Response Context: %+v\n", response.Context)
+	} else {
+		log.Printf("Event sent at %s", time.Now())
+		return errors.New("error insert embeddings failed")
 	}
 	return nil
 }
