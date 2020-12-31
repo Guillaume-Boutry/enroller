@@ -16,19 +16,3 @@ spec:
               value: http://data-controller.default
       imagePullSecrets:
         - name: regcred
----
-#apiVersion: eventing.knative.dev/v1
-#kind: Trigger
-#metadata:
-#  name: enroller
-#spec:
-#  broker: default
-#  filter:
-#    attributes:
-#      source: grpc-backend
-#      type: enroll
-#  subscriber:
-#    ref:
-#      apiVersion: serving.knative.dev/v1
-#      kind: Service
-#      name: enroller
