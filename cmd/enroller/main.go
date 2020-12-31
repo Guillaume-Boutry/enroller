@@ -89,22 +89,24 @@ func (recv *Receiver) ReceiveAndReply(ctx context.Context, event cloudevents.Eve
 
 	if err := recv.insertEmbeddings(ctx, enrollRequest.FaceRequest.Id, serialized); err != nil {
 		log.Println(err)
-		return nil, cloudevents.NewHTTPResult(500, "error while inserting to bdd")
+		return nil, cloudevents.NewHTTPResult(500, "error while inserting to db")
 	}
 
 	enrollResponse := &face_authenticator.EnrollResponse{
 		Status:  face_authenticator.EnrollStatus_ENROLL_STATUS_OK,
-		Message: fmt.Sprintf("%s enrolled with sucess", enrollRequest.FaceRequest.Id),
+		Message: fmt.Sprintf("%s enrolled with success", enrollRequest.FaceRequest.Id),
 	}
 	resp, err := proto.Marshal(enrollResponse)
 	if err != nil {
 		log.Println(err)
 		return nil, cloudevents.NewHTTPResult(500, "failed to serialize response")
 	}
+
+	msg := Message{Payload: resp}
 	r := cloudevents.NewEvent(cloudevents.VersionV1)
 	r.SetType("enroll-response")
 	r.SetSource("enroller")
-	if err := r.SetData("application/json", resp); err != nil {
+	if err := r.SetData("application/json", msg); err != nil {
 		return nil, cloudevents.NewHTTPResult(500, "failed to set response data")
 	}
 
